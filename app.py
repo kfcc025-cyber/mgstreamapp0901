@@ -14,4 +14,4 @@ st.markdown(
 )
 
 if st.button("Send 크크!"):
-    st.flowers()
+    st.balloons()
