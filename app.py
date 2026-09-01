@@ -1,20 +1,23 @@
 import streamlit as st
 import pandas as pd
 from google import genai
+from google.genai import types
 
 
 # =========================================================
-# 1. Streamlit 기본 설정
+# 1. Streamlit 설정
 # =========================================================
 
 st.set_page_config(
-    page_title="업무지원 CSV AI Agent",
-    page_icon="📊",
+    page_title="업무지원 AI Agent",
+    page_icon="🤖",
     layout="wide"
 )
 
-st.title("업무지원 CSV AI Agent")
-st.caption("교육용 합성 데이터를 분석하는 AI Agent")
+st.title("업무지원 AI Agent")
+st.caption(
+    "사용자의 요청을 판단하여 필요한 데이터 분석 Tool을 선택하는 교육용 AI Agent"
+)
 
 
 # =========================================================
@@ -25,13 +28,11 @@ client = genai.Client(
     api_key=st.secrets["GEMINI_API_KEY"]
 )
 
-# 사용할 Gemini 모델
-# 모델을 변경할 경우 이 부분만 수정하면 됨
 MODEL_NAME = "gemini-3-flash-preview"
 
 
 # =========================================================
-# 3. CSV 파일 업로드
+# 3. CSV 업로드
 # =========================================================
 
 uploaded_file = st.file_uploader(
@@ -40,22 +41,9 @@ uploaded_file = st.file_uploader(
 )
 
 
-# =========================================================
-# 4. CSV 업로드 후 분석
-# =========================================================
-
 if uploaded_file is not None:
 
-    # -----------------------------------------------------
-    # CSV 읽기
-    # -----------------------------------------------------
-
     df = pd.read_csv(uploaded_file)
-
-
-    # =====================================================
-    # 4-1. 데이터 미리보기
-    # =====================================================
 
     st.subheader("1. 데이터 미리보기")
 
@@ -66,391 +54,376 @@ if uploaded_file is not None:
 
 
     # =====================================================
-    # 4-2. KPI 계산
+    # 4. Agent가 사용할 Tool 함수
     # =====================================================
 
-    total_count = len(df)
+    def calculate_kpi():
+        """
+        전체 요청, 완료, 미완료, 완료율,
+        긴급 미완료 건수를 계산합니다.
+        """
 
-    completed_count = (
-        df["status"]
-        .astype(str)
-        .str.strip()
-        .eq("완료")
-        .sum()
-    )
+        total_count = len(df)
 
-    incomplete_count = (
-        total_count - completed_count
-    )
-
-    completion_rate = (
-        completed_count / total_count * 100
-        if total_count > 0
-        else 0
-    )
-
-
-    # 긴급 미완료
-    urgent_incomplete = df[
-        (df["urgency"].astype(str).str.strip() == "상")
-        &
-        (df["status"].astype(str).str.strip() != "완료")
-    ]
-
-    urgent_incomplete_count = len(
-        urgent_incomplete
-    )
-
-
-    # =====================================================
-    # 4-3. KPI 화면
-    # =====================================================
-
-    st.subheader("2. 주요 현황")
-
-    col1, col2, col3, col4 = st.columns(4)
-
-    col1.metric(
-        "전체 요청",
-        f"{total_count}건"
-    )
-
-    col2.metric(
-        "완료",
-        f"{completed_count}건"
-    )
-
-    col3.metric(
-        "완료율",
-        f"{completion_rate:.1f}%"
-    )
-
-    col4.metric(
-        "긴급 미완료",
-        f"{urgent_incomplete_count}건"
-    )
-
-
-    # =====================================================
-    # 4-4. 업무분류별 집계
-    # =====================================================
-
-    st.subheader("3. 업무분류별 요청")
-
-    category_counts = (
-        df["category"]
-        .astype(str)
-        .str.strip()
-        .value_counts()
-        .reset_index()
-    )
-
-    category_counts.columns = [
-        "업무분류",
-        "요청건수"
-    ]
-
-
-    # 왼쪽 표 / 오른쪽 차트
-    category_col1, category_col2 = st.columns(2)
-
-    with category_col1:
-
-        st.markdown("#### 업무분류별 집계")
-
-        st.dataframe(
-            category_counts,
-            use_container_width=True
+        completed_count = (
+            df["status"]
+            .astype(str)
+            .str.strip()
+            .eq("완료")
+            .sum()
         )
 
-
-    with category_col2:
-
-        st.markdown("#### 업무분류별 요청건수")
-
-        st.bar_chart(
-            category_counts.set_index("업무분류")
+        incomplete_count = (
+            total_count - completed_count
         )
+
+        completion_rate = (
+            completed_count / total_count * 100
+            if total_count > 0
+            else 0
+        )
+
+        urgent_incomplete_count = len(
+            df[
+                (df["urgency"].astype(str).str.strip() == "상")
+                &
+                (df["status"].astype(str).str.strip() != "완료")
+            ]
+        )
+
+        return {
+            "전체 요청": int(total_count),
+            "완료": int(completed_count),
+            "미완료": int(incomplete_count),
+            "완료율": round(completion_rate, 1),
+            "긴급 미완료": int(urgent_incomplete_count)
+        }
+
+
+    def get_category_counts():
+        """
+        업무분류별 요청 건수를 계산합니다.
+        """
+
+        counts = (
+            df["category"]
+            .astype(str)
+            .str.strip()
+            .value_counts()
+            .to_dict()
+        )
+
+        return {
+            str(category): int(count)
+            for category, count in counts.items()
+        }
+
+
+    def find_urgent_incomplete():
+        """
+        긴급도가 '상'이고 아직 완료되지 않은 요청을 찾습니다.
+        """
+
+        urgent_df = df[
+            (df["urgency"].astype(str).str.strip() == "상")
+            &
+            (df["status"].astype(str).str.strip() != "완료")
+        ]
+
+        if urgent_df.empty:
+            return {
+                "건수": 0,
+                "요청": []
+            }
+
+        # 너무 많은 데이터를 LLM에 보내지 않도록 제한
+        result_df = urgent_df.head(20)
+
+        return {
+            "건수": len(urgent_df),
+            "요청": result_df.to_dict(
+                orient="records"
+            )
+        }
 
 
     # =====================================================
-    # 4-5. 긴급 미완료 요청
+    # 5. Tool 선언
     # =====================================================
 
-    st.subheader("4. 긴급 미완료 요청")
+    calculate_kpi_declaration = {
+        "name": "calculate_kpi",
+        "description": (
+            "업무지원 데이터의 전체 요청, 완료, 미완료, "
+            "완료율, 긴급 미완료 건수를 계산합니다."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {}
+        }
+    }
 
-    if urgent_incomplete.empty:
 
-        st.success(
-            "현재 긴급 미완료 요청이 없습니다."
-        )
+    get_category_counts_declaration = {
+        "name": "get_category_counts",
+        "description": (
+            "업무지원 데이터에서 업무분류별 요청 건수를 계산합니다."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {}
+        }
+    }
 
-    else:
 
-        st.warning(
-            f"긴급 미완료 요청이 "
-            f"{urgent_incomplete_count}건 있습니다."
-        )
-
-        st.dataframe(
-            urgent_incomplete,
-            use_container_width=True
-        )
+    find_urgent_incomplete_declaration = {
+        "name": "find_urgent_incomplete",
+        "description": (
+            "긴급도가 '상'이면서 상태가 완료가 아닌 "
+            "긴급 미완료 요청을 찾습니다."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {}
+        }
+    }
 
 
     # =====================================================
-    # 5. AI Agent 기능
+    # 6. Tool 설정
     # =====================================================
 
-    st.subheader("5. AI Agent")
-
-    st.caption(
-        "Python에서 계산한 결과를 바탕으로 "
-        "AI가 분석 보고서 또는 보고 메일 초안을 작성합니다."
+    tools = types.Tool(
+        function_declarations=[
+            calculate_kpi_declaration,
+            get_category_counts_declaration,
+            find_urgent_incomplete_declaration
+        ]
     )
 
 
-    # -----------------------------------------------------
-    # 버튼 2개를 나란히 배치
-    # -----------------------------------------------------
+    config = types.GenerateContentConfig(
+        tools=[tools],
+        system_instruction="""
+당신은 교육용 업무지원 데이터 분석 AI Agent입니다.
 
-    report_col, mail_col = st.columns(2)
+사용자의 요청을 분석하고,
+필요한 경우 제공된 Tool을 선택하여 사용하세요.
 
+Tool 사용 원칙:
 
-    with report_col:
+1. 요청건수, 완료율 등 수치가 필요한 경우
+   calculate_kpi를 사용하세요.
 
-        report_button = st.button(
-            "📄 AI 분석 보고서 생성",
-            use_container_width=True
-        )
+2. 업무분류별 현황이 필요한 경우
+   get_category_counts를 사용하세요.
 
+3. 긴급하게 확인해야 할 요청이 필요한 경우
+   find_urgent_incomplete를 사용하세요.
 
-    with mail_col:
+4. 데이터에 없는 원인을 추측하지 마세요.
 
-        mail_button = st.button(
-            "✉️ 보고 메일 초안 생성",
-            use_container_width=True
-        )
+5. 확인할 수 없는 내용은
+   '확인 필요'라고 표시하세요.
 
+6. 계산할 수 있는 수치를 임의로 추정하지 말고
+   반드시 Tool 결과를 사용하세요.
 
-    # =====================================================
-    # 5-1. AI 분석 보고서 생성
-    # =====================================================
+7. 긴급 미완료 요청이 존재한다고 해서
+   장애 원인을 확정하지 마세요.
 
-    if report_button:
-
-        # 업무분류별 집계를 텍스트로 변환
-        category_text = (
-            category_counts
-            .to_string(index=False)
-        )
-
-
-        # 긴급 미완료 상세를 텍스트로 변환
-        urgent_text = (
-            urgent_incomplete
-            .to_string(index=False)
-            if not urgent_incomplete.empty
-            else "없음"
-        )
-
-
-        # -------------------------------------------------
-        # 보고서 생성 Prompt
-        # -------------------------------------------------
-
-        report_prompt = f"""
-당신은 교육용 업무지원 데이터 분석 Agent입니다.
-
-Python에서 이미 계산한 결과를 아래에 제공합니다.
-
-[전체 요청]
-{total_count}건
-
-[완료]
-{completed_count}건
-
-[미완료]
-{incomplete_count}건
-
-[완료율]
-{completion_rate:.1f}%
-
-[긴급 미완료]
-{urgent_incomplete_count}건
-
-[업무분류별 요청]
-{category_text}
-
-[긴급 미완료 상세]
-{urgent_text}
-
-
-위 계산 결과를 근거로
-내부 업무보고용 분석 보고서를 작성하세요.
-
-
-다음 구조를 사용합니다.
-
-1. Executive Summary
-
-2. 주요 현황
-
-3. 업무분류별 특징
-
-4. 긴급 확인 대상
-
-5. 담당자가 확인할 사항
-
-6. 추가 확인 필요사항
-
-
-작성 원칙:
-
-- 제공된 데이터만 근거로 작성하세요.
-
-- 제공되지 않은 원인을 추측하지 마세요.
-
-- 숫자를 임의로 변경하지 마세요.
-
-- 데이터에서 확인할 수 없는 사항은
-  '확인 필요'라고 표시하세요.
-
-- 긴급 미완료 요청이 있다는 이유만으로
-  실제 장애나 문제의 원인을 확정하지 마세요.
-
-- 공공기관 또는 금융기관 내부 보고서에 적합한
-  간결하고 공식적인 문체를 사용하세요.
-
-- 이 데이터는 교육용 합성자료입니다.
+8. 최종 답변은 금융기관 또는 공공기관의
+   내부 업무보고에 적합한 문체로 작성하세요.
 """
+    )
 
 
-        # -------------------------------------------------
-        # Gemini 호출
-        # -------------------------------------------------
+    # =====================================================
+    # 7. Agent 화면
+    # =====================================================
 
-        with st.spinner(
-            "AI가 분석 보고서를 작성하고 있습니다..."
-        ):
+    st.subheader("2. AI Agent에게 업무 요청")
 
-            response = client.models.generate_content(
-                model=MODEL_NAME,
-                contents=report_prompt
+    user_request = st.text_area(
+        "업무 요청을 입력하세요.",
+        placeholder=(
+            "예: 현재 업무지원 현황을 분석하고 "
+            "긴급하게 확인해야 할 사항이 있으면 알려줘."
+        ),
+        height=120
+    )
+
+
+    if st.button(
+        "🤖 Agent 실행",
+        use_container_width=True
+    ):
+
+        if not user_request.strip():
+
+            st.warning(
+                "Agent에게 요청할 내용을 입력하세요."
             )
 
+        else:
 
-        # -------------------------------------------------
-        # 결과 출력
-        # -------------------------------------------------
+            with st.spinner(
+                "AI Agent가 필요한 작업을 판단하고 있습니다..."
+            ):
 
-        st.markdown("---")
+                # =========================================
+                # 1차 Gemini 호출
+                # 어떤 Tool이 필요한지 판단
+                # =========================================
 
-        st.markdown(
-            "### 📄 AI 분석 보고서"
-        )
-
-        st.markdown(
-            response.text
-        )
-
-
-    # =====================================================
-    # 5-2. 보고 메일 초안 생성
-    # =====================================================
-
-    if mail_button:
-
-        # -------------------------------------------------
-        # 이메일 생성 Prompt
-        # -------------------------------------------------
-
-        mail_prompt = f"""
-당신은 업무보고 이메일 작성 Agent입니다.
-
-다음 업무지원 분석 결과를 바탕으로
-내부 보고용 이메일 초안을 작성하세요.
+                response = client.models.generate_content(
+                    model=MODEL_NAME,
+                    contents=user_request,
+                    config=config
+                )
 
 
-[분석 결과]
+                # =========================================
+                # 모델이 요청한 Function Call 확인
+                # =========================================
 
-전체 요청: {total_count}건
-
-완료: {completed_count}건
-
-미완료: {incomplete_count}건
-
-완료율: {completion_rate:.1f}%
-
-긴급 미완료: {urgent_incomplete_count}건
+                function_calls = response.function_calls
 
 
-메일은 다음 형식으로 작성하세요.
+                if not function_calls:
+
+                    # Tool이 필요하지 않은 경우
+                    st.subheader("3. Agent 답변")
+
+                    st.markdown(
+                        response.text
+                    )
+
+                else:
+
+                    contents = [
+                        types.Content(
+                            role="user",
+                            parts=[
+                                types.Part(
+                                    text=user_request
+                                )
+                            ]
+                        ),
+                        response.candidates[0].content
+                    ]
 
 
-제목:
+                    # =====================================
+                    # 여러 Tool 호출 처리
+                    # =====================================
 
-본문:
+                    executed_tools = []
 
+                    for function_call in function_calls:
 
-본문은 다음 순서로 구성합니다.
-
-1. 분석대상
-
-2. 주요 현황
-
-3. 긴급 확인사항
-
-4. 추가 확인 필요사항
+                        function_name = (
+                            function_call.name
+                        )
 
 
-작성 원칙:
+                        # ---------------------------------
+                        # Tool 실행
+                        # ---------------------------------
 
-- 제공된 분석 결과만 사용하세요.
+                        if function_name == "calculate_kpi":
 
-- 데이터에 없는 원인을 추측하지 마세요.
-
-- 숫자를 임의로 변경하지 마세요.
-
-- 확인할 수 없는 사항은
-  '확인 필요'라고 표시하세요.
-
-- 긴급 미완료 요청이 있다는 이유만으로
-  장애 원인이나 담당자의 책임을 추측하지 마세요.
-
-- 내부 업무보고 이메일에 적합하도록
-  간결하고 공식적인 문체를 사용하세요.
-
-- 이메일 마지막에는
-  '※ 본 내용은 교육용 합성자료를 기반으로 작성되었습니다.'
-  라고 표시하세요.
-"""
+                            result = calculate_kpi()
 
 
-        # -------------------------------------------------
-        # Gemini 호출
-        # -------------------------------------------------
+                        elif function_name == "get_category_counts":
 
-        with st.spinner(
-            "AI가 보고 메일 초안을 작성하고 있습니다..."
-        ):
-
-            mail_response = client.models.generate_content(
-                model=MODEL_NAME,
-                contents=mail_prompt
-            )
+                            result = get_category_counts()
 
 
-        # -------------------------------------------------
-        # 결과 출력
-        # -------------------------------------------------
+                        elif function_name == "find_urgent_incomplete":
 
-        st.markdown("---")
+                            result = find_urgent_incomplete()
 
-        st.markdown(
-            "### ✉️ 보고 메일 초안"
-        )
 
-        st.markdown(
-            mail_response.text
-        )
+                        else:
+
+                            result = {
+                                "error":
+                                f"알 수 없는 Tool: {function_name}"
+                            }
+
+
+                        executed_tools.append(
+                            {
+                                "tool": function_name,
+                                "result": result
+                            }
+                        )
+
+
+                        # ---------------------------------
+                        # Tool 결과를 Gemini에게 전달
+                        # ---------------------------------
+
+                        function_response_part = (
+                            types.Part.from_function_response(
+                                name=function_name,
+                                response={
+                                    "result": result
+                                }
+                            )
+                        )
+
+
+                        contents.append(
+                            types.Content(
+                                role="user",
+                                parts=[
+                                    function_response_part
+                                ]
+                            )
+                        )
+
+
+                    # =====================================
+                    # 2차 Gemini 호출
+                    # Tool 결과를 바탕으로 최종 답변 생성
+                    # =====================================
+
+                    final_response = (
+                        client.models.generate_content(
+                            model=MODEL_NAME,
+                            contents=contents,
+                            config=config
+                        )
+                    )
+
+
+                    # =====================================
+                    # 결과 출력
+                    # =====================================
+
+                    st.subheader("3. Agent 실행 결과")
+
+
+                    with st.expander(
+                        "Agent가 사용한 Tool 확인"
+                    ):
+
+                        for item in executed_tools:
+
+                            st.markdown(
+                                f"**{item['tool']}**"
+                            )
+
+                            st.json(
+                                item["result"]
+                            )
+
+
+                    st.subheader("4. Agent 최종 답변")
+
+                    st.markdown(
+                        final_response.text
+                    )
