@@ -1,429 +1,158 @@
-import streamlit as st
-import pandas as pd
-from google import genai
-from google.genai import types
+from __future__ import annotations
 
-
-# =========================================================
-# 1. Streamlit 설정
-# =========================================================
-
-st.set_page_config(
-    page_title="업무지원 AI Agent",
-    page_icon="🤖",
-    layout="wide"
-)
-
-st.title("업무지원 AI Agent")
-st.caption(
-    "사용자의 요청을 판단하여 필요한 데이터 분석 Tool을 선택하는 교육용 AI Agent"
-)
-
-
-# =========================================================
-# 2. Gemini 설정
-# =========================================================
-
-client = genai.Client(
-    api_key=st.secrets["GEMINI_API_KEY"]
-)
-
-MODEL_NAME = "gemini-3-flash-preview"
-
-
-# =========================================================
-# 3. CSV 업로드
-# =========================================================
-
-uploaded_file = st.file_uploader(
-    "업무지원 CSV 파일을 업로드하세요.",
-    type=["csv"]
-)
-
-
-if uploaded_file is not None:
-
-    df = pd.read_csv(uploaded_file)
-
-    st.subheader("1. 데이터 미리보기")
-
-    st.dataframe(
-        df,
-        use_container_width=True
-    )
-
-
-    # =====================================================
-    # 4. Agent가 사용할 Tool 함수
-    # =====================================================
-
-    def calculate_kpi():
-        """
-        전체 요청, 완료, 미완료, 완료율,
-        긴급 미완료 건수를 계산합니다.
-        """
-
-        total_count = len(df)
-
-        completed_count = (
-            df["status"]
-            .astype(str)
-            .str.strip()
-            .eq("완료")
-            .sum()
-        )
-
-        incomplete_count = (
-            total_count - completed_count
-        )
-
-        completion_rate = (
-            completed_count / total_count * 100
-            if total_count > 0
-            else 0
-        )
-
-        urgent_incomplete_count = len(
-            df[
-                (df["urgency"].astype(str).str.strip() == "상")
-                &
-                (df["status"].astype(str).str.strip() != "완료")
-            ]
-        )
-
-        return {
-            "전체 요청": int(total_count),
-            "완료": int(completed_count),
-            "미완료": int(incomplete_count),
-            "완료율": round(completion_rate, 1),
-            "긴급 미완료": int(urgent_incomplete_count)
-        }
-
-
-    def get_category_counts():
-        """
-        업무분류별 요청 건수를 계산합니다.
-        """
-
-        counts = (
-            df["category"]
-            .astype(str)
-            .str.strip()
-            .value_counts()
-            .to_dict()
-        )
-
-        return {
-            str(category): int(count)
-            for category, count in counts.items()
-        }
-
-
-    def find_urgent_incomplete():
-        """
-        긴급도가 '상'이고 아직 완료되지 않은 요청을 찾습니다.
-        """
-
-        urgent_df = df[
-            (df["urgency"].astype(str).str.strip() == "상")
-            &
-            (df["status"].astype(str).str.strip() != "완료")
-        ]
-
-        if urgent_df.empty:
-            return {
-                "건수": 0,
-                "요청": []
-            }
-
-        # 너무 많은 데이터를 LLM에 보내지 않도록 제한
-        result_df = urgent_df.head(20)
-
-        return {
-            "건수": len(urgent_df),
-            "요청": result_df.to_dict(
-                orient="records"
-            )
-        }
-
-
-    # =====================================================
-    # 5. Tool 선언
-    # =====================================================
-
-    calculate_kpi_declaration = {
-        "name": "calculate_kpi",
-        "description": (
-            "업무지원 데이터의 전체 요청, 완료, 미완료, "
-            "완료율, 긴급 미완료 건수를 계산합니다."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {}
-        }
-    }
-
-
-    get_category_counts_declaration = {
-        "name": "get_category_counts",
-        "description": (
-            "업무지원 데이터에서 업무분류별 요청 건수를 계산합니다."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {}
-        }
-    }
-
-
-    find_urgent_incomplete_declaration = {
-        "name": "find_urgent_incomplete",
-        "description": (
-            "긴급도가 '상'이면서 상태가 완료가 아닌 "
-            "긴급 미완료 요청을 찾습니다."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {}
-        }
-    }
-
-
-    # =====================================================
-    # 6. Tool 설정
-    # =====================================================
-
-    tools = types.Tool(
-        function_declarations=[
-            calculate_kpi_declaration,
-            get_category_counts_declaration,
-            find_urgent_incomplete_declaration
-        ]
-    )
-
-
-    config = types.GenerateContentConfig(
-        tools=[tools],
-        system_instruction="""
-당신은 교육용 업무지원 데이터 분석 AI Agent입니다.
-
-사용자의 요청을 분석하고,
-필요한 경우 제공된 Tool을 선택하여 사용하세요.
-
-Tool 사용 원칙:
-
-1. 요청건수, 완료율 등 수치가 필요한 경우
-   calculate_kpi를 사용하세요.
-
-2. 업무분류별 현황이 필요한 경우
-   get_category_counts를 사용하세요.
-
-3. 긴급하게 확인해야 할 요청이 필요한 경우
-   find_urgent_incomplete를 사용하세요.
-
-4. 데이터에 없는 원인을 추측하지 마세요.
-
-5. 확인할 수 없는 내용은
-   '확인 필요'라고 표시하세요.
-
-6. 계산할 수 있는 수치를 임의로 추정하지 말고
-   반드시 Tool 결과를 사용하세요.
-
-7. 긴급 미완료 요청이 존재한다고 해서
-   장애 원인을 확정하지 마세요.
-
-8. 최종 답변은 금융기관 또는 공공기관의
-   내부 업무보고에 적합한 문체로 작성하세요.
-"""
-    )
-
-
-    # =====================================================
-    # 7. Agent 화면
-    # =====================================================
-
-    st.subheader("2. AI Agent에게 업무 요청")
-
-    user_request = st.text_area(
-        "업무 요청을 입력하세요.",
-        placeholder=(
-            "예: 현재 업무지원 현황을 분석하고 "
-            "긴급하게 확인해야 할 사항이 있으면 알려줘."
-        ),
-        height=120
-    )
-
-
-    if st.button(
-        "🤖 Agent 실행",
-        use_container_width=True
-    ):
-
-        if not user_request.strip():
-
-            st.warning(
-                "Agent에게 요청할 내용을 입력하세요."
-            )
-
+import argparse
+import json
+from pathlib import Path
+
+DATA_FILE = Path(__file__).with_name("tasks.json")
+
+
+def load_tasks() -> list[dict]:
+    if not DATA_FILE.exists():
+        return []
+
+    try:
+        with DATA_FILE.open("r", encoding="utf-8") as file:
+            tasks = json.load(file)
+        if isinstance(tasks, list):
+            return tasks
+    except (json.JSONDecodeError, OSError):
+        pass
+
+    return []
+
+
+def save_tasks(tasks: list[dict]) -> None:
+    with DATA_FILE.open("w", encoding="utf-8") as file:
+        json.dump(tasks, file, ensure_ascii=False, indent=2)
+        file.write("\n")
+
+
+def next_id(tasks: list[dict]) -> int:
+    if not tasks:
+        return 1
+    return max(task.get("id", 0) for task in tasks) + 1
+
+
+def add_task(title: str) -> str:
+    title = title.strip()
+    if not title:
+        return "할 일을 입력해주세요."
+
+    tasks = load_tasks()
+    tasks.append({"id": next_id(tasks), "title": title, "done": False})
+    save_tasks(tasks)
+    return f"추가 완료: {title}"
+
+
+def list_tasks() -> list[dict]:
+    return load_tasks()
+
+
+def complete_task(task_id: int) -> str:
+    tasks = load_tasks()
+    for task in tasks:
+        if task.get("id") == task_id:
+            task["done"] = True
+            save_tasks(tasks)
+            return f"완료 처리: {task['title']}"
+    return f"ID {task_id}번 할 일을 찾을 수 없습니다."
+
+
+def delete_task(task_id: int) -> str:
+    tasks = load_tasks()
+    for index, task in enumerate(tasks):
+        if task.get("id") == task_id:
+            removed = tasks.pop(index)
+            save_tasks(tasks)
+            return f"삭제 완료: {removed['title']}"
+    return f"ID {task_id}번 할 일을 찾을 수 없습니다."
+
+
+def print_task_list(tasks: list[dict]) -> None:
+    if not tasks:
+        print("등록된 할 일이 없습니다.")
+        return
+
+    print("\n현재 할 일 목록")
+    print("-" * 40)
+    for task in tasks:
+        status = "✅ 완료" if task.get("done") else "⏳ 진행 중"
+        print(f"{task.get('id', 0)}. [{status}] {task.get('title', '')}")
+    print("-" * 40)
+
+
+def interactive_menu() -> None:
+    while True:
+        print("\n=== 할 일 관리 프로그램 ===")
+        print("1. 추가")
+        print("2. 목록 보기")
+        print("3. 완료 처리")
+        print("4. 삭제")
+        print("5. 종료")
+
+        choice = input("선택하세요: ").strip()
+
+        if choice == "1":
+            title = input("할 일 내용을 입력하세요: ").strip()
+            print(add_task(title))
+        elif choice == "2":
+            print_task_list(list_tasks())
+        elif choice == "3":
+            task_id = input("완료할 할 일 ID를 입력하세요: ").strip()
+            if task_id.isdigit():
+                print(complete_task(int(task_id)))
+            else:
+                print("숫자를 입력해주세요.")
+        elif choice == "4":
+            task_id = input("삭제할 할 일 ID를 입력하세요: ").strip()
+            if task_id.isdigit():
+                print(delete_task(int(task_id)))
+            else:
+                print("숫자를 입력해주세요.")
+        elif choice == "5":
+            print("프로그램을 종료합니다.")
+            break
         else:
-
-            with st.spinner(
-                "AI Agent가 필요한 작업을 판단하고 있습니다..."
-            ):
-
-                # =========================================
-                # 1차 Gemini 호출
-                # 어떤 Tool이 필요한지 판단
-                # =========================================
-
-                response = client.models.generate_content(
-                    model=MODEL_NAME,
-                    contents=user_request,
-                    config=config
-                )
+            print("잘못된 선택입니다.")
 
 
-                # =========================================
-                # 모델이 요청한 Function Call 확인
-                # =========================================
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="간단한 할 일 관리 프로그램")
+    subparsers = parser.add_subparsers(dest="command")
 
-                function_calls = response.function_calls
+    add_parser = subparsers.add_parser("add", help="할 일 추가")
+    add_parser.add_argument("title", help="추가할 할 일 내용")
 
+    list_parser = subparsers.add_parser("list", help="할 일 목록 보기")
+    list_parser.set_defaults(command="list")
 
-                if not function_calls:
+    done_parser = subparsers.add_parser("done", help="할 일 완료 처리")
+    done_parser.add_argument("id", type=int, help="완료할 할 일 ID")
 
-                    # Tool이 필요하지 않은 경우
-                    st.subheader("3. Agent 답변")
+    delete_parser = subparsers.add_parser("delete", help="할 일 삭제")
+    delete_parser.add_argument("id", type=int, help="삭제할 할 일 ID")
 
-                    st.markdown(
-                        response.text
-                    )
-
-                else:
-
-                    contents = [
-                        types.Content(
-                            role="user",
-                            parts=[
-                                types.Part(
-                                    text=user_request
-                                )
-                            ]
-                        ),
-                        response.candidates[0].content
-                    ]
+    return parser
 
 
-                    # =====================================
-                    # 여러 Tool 호출 처리
-                    # =====================================
+def main() -> None:
+    parser = build_parser()
+    args = parser.parse_args()
 
-                    executed_tools = []
+    if not hasattr(args, "command") or args.command is None:
+        interactive_menu()
+        return
 
-                    for function_call in function_calls:
-
-                        function_name = (
-                            function_call.name
-                        )
-
-
-                        # ---------------------------------
-                        # Tool 실행
-                        # ---------------------------------
-
-                        if function_name == "calculate_kpi":
-
-                            result = calculate_kpi()
+    if args.command == "add":
+        print(add_task(args.title))
+    elif args.command == "list":
+        print_task_list(list_tasks())
+    elif args.command == "done":
+        print(complete_task(args.id))
+    elif args.command == "delete":
+        print(delete_task(args.id))
 
 
-                        elif function_name == "get_category_counts":
-
-                            result = get_category_counts()
-
-
-                        elif function_name == "find_urgent_incomplete":
-
-                            result = find_urgent_incomplete()
-
-
-                        else:
-
-                            result = {
-                                "error":
-                                f"알 수 없는 Tool: {function_name}"
-                            }
-
-
-                        executed_tools.append(
-                            {
-                                "tool": function_name,
-                                "result": result
-                            }
-                        )
-
-
-                        # ---------------------------------
-                        # Tool 결과를 Gemini에게 전달
-                        # ---------------------------------
-
-                        function_response_part = (
-                            types.Part.from_function_response(
-                                name=function_name,
-                                response={
-                                    "result": result
-                                }
-                            )
-                        )
-
-
-                        contents.append(
-                            types.Content(
-                                role="user",
-                                parts=[
-                                    function_response_part
-                                ]
-                            )
-                        )
-
-
-                    # =====================================
-                    # 2차 Gemini 호출
-                    # Tool 결과를 바탕으로 최종 답변 생성
-                    # =====================================
-
-                    final_response = (
-                        client.models.generate_content(
-                            model=MODEL_NAME,
-                            contents=contents,
-                            config=config
-                        )
-                    )
-
-
-                    # =====================================
-                    # 결과 출력
-                    # =====================================
-
-                    st.subheader("3. Agent 실행 결과")
-
-
-                    with st.expander(
-                        "Agent가 사용한 Tool 확인"
-                    ):
-
-                        for item in executed_tools:
-
-                            st.markdown(
-                                f"**{item['tool']}**"
-                            )
-
-                            st.json(
-                                item["result"]
-                            )
-
-
-                    st.subheader("4. Agent 최종 답변")
-
-                    st.markdown(
-                        final_response.text
-                    )
+if __name__ == "__main__":
+    main()
