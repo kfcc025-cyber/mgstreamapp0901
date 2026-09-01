@@ -13,5 +13,5 @@ st.markdown(
     """
 )
 
-if st.button("Send balloons!"):
+if st.button("Send 크크!"):
     st.balloons()
