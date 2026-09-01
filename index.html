@@ -1,40 +1,240 @@
-<!DOCTYPE html>
-<html lang="ko">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>할 일 관리</title>
-    <link rel="stylesheet" href="style.css" />
-  </head>
-  <body>
-    <div class="app">
-      <h1>할 일 관리</h1>
+const STORAGE_KEY = 'todo-html-app-v1';
 
-      <div class="input-row">
-        <input
-          id="todo-input"
-          type="text"
-          maxlength="100"
-          placeholder="예: 프로젝트 발표 준비"
-          aria-label="할 일 입력"
-        />
-        <button id="add-btn" type="button">추가</button>
-      </div>
+const todoInput = document.getElementById('todo-input');
+const addBtn = document.getElementById('add-btn');
+const todoList = document.getElementById('todo-list');
+const taskCount = document.getElementById('task-count');
+const clearCompletedBtn = document.getElementById('clear-completed');
+const filterButtons = document.querySelectorAll('.filter-btn');
 
-      <div class="filters" aria-label="필터">
-        <button class="filter-btn active" type="button" data-filter="all">전체</button>
-        <button class="filter-btn" type="button" data-filter="active">진행 중</button>
-        <button class="filter-btn" type="button" data-filter="completed">완료</button>
-      </div>
+let tasks = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+let currentFilter = 'all';
 
-      <ul id="todo-list" aria-live="polite"></ul>
+function saveTasks() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
+}
 
-      <div class="footer">
-        <span id="task-count">0개 남음</span>
-        <button id="clear-completed" type="button" class="secondary">완료 항목 삭제</button>
-      </div>
-    </div>
+function getFilteredTasks() {
+  if (currentFilter === 'active') {
+    return tasks.filter((task) => !task.completed);
+  }
 
-    <script src="script.js"></script>
-  </body>
-</html>
+  if (currentFilter === 'completed') {
+    return tasks.filter((task) => task.completed);
+  }
+
+  return tasks;
+}
+
+function render() {
+  const filteredTasks = getFilteredTasks();
+
+  if (filteredTasks.length === 0) {
+    todoList.innerHTML = '<li class="empty">할 일이 없습니다.</li>';
+  } else {
+    todoList.innerHTML = filteredTasks
+      .map(
+        (task) => `
+          <li class="todo-item ${task.completed ? 'completed' : ''}" data-id="${task.id}">
+            <div class="todo-main">
+              <input
+                class="todo-checkbox"
+                type="checkbox"
+                ${task.completed ? 'checked' : ''}
+                aria-label="${task.text} 완료 여부"
+              />
+              <span class="todo-text">${escapeHtml(task.text)}</span>
+            </div>
+            <button class="delete-btn" type="button" aria-label="${task.text} 삭제">삭제</button>
+          </li>
+        `
+      )
+      .join('');
+  }
+
+  const activeCount = tasks.filter((task) => !task.completed).length;
+  taskCount.textContent = `${activeCount}개 남음`;
+
+  filterButtons.forEach((button) => {
+    button.classList.toggle('active', button.dataset.filter === currentFilter);
+  });
+}
+
+function addTask() {
+  const text = todoInput.value.trim();
+
+  if (!text) {
+    todoInput.focus();
+    return;
+  }
+
+  tasks.unshift({
+    id: Date.now(),
+    text,
+    completed: false,
+  });
+
+  saveTasks();
+  todoInput.value = '';
+  todoInput.focus();
+  render();
+}
+
+function toggleTask(id) {
+  tasks = tasks.map((task) =>
+    task.id === id ? { ...task, completed: !task.completed } : task
+  );
+
+  saveTasks();
+  render();
+}
+
+function deleteTask(id) {
+  tasks = tasks.filter((task) => task.id !== id);
+  saveTasks();
+  render();
+}
+
+function clearCompleted() {
+  tasks = tasks.filter((task) => !task.completed);
+  saveTasks();
+  render();
+}
+
+function escapeHtml(value) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+addBtn.addEventListener('click', addTask);
+
+todoInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    addTask();
+  }
+});
+
+todoList.addEventListener('click', (event) => {
+  const deleteButton = event.target.closest('.delete-btn');
+
+  if (deleteButton) {
+    const item = deleteButton.closest('.todo-item');
+    if (item) {
+      deleteTask(Number(item.dataset.id));
+    }
+    return;
+  }
+
+  const checkbox = event.target.closest('.todo-checkbox');
+  if (checkbox) {
+    const item = checkbox.closest('.todo-item');
+    if (item) {
+      toggleTask(Number(item.dataset.id));
+    }
+  }
+});
+
+filterButtons.forEach((button) => {
+  button.addEventListener('click', () => {
+    currentFilter = button.dataset.filter;
+    render();
+  });
+});
+
+clearCompletedBtn.addEventListener('click', clearCompleted);
+
+render();
+const STORAGE_KEY = 'fitlog-daily-routine-v1';
+const DEFAULT_ROUTINE = [
+  { id: 'warmup', name: '가벼운 스트레칭', detail: '5분', icon: '🧘' },
+  { id: 'squat', name: '스쿼트', detail: '3세트 × 15회', icon: '🏋️' },
+  { id: 'pushup', name: '푸시업', detail: '3세트 × 10회', icon: '💪' },
+  { id: 'walk', name: '빠르게 걷기', detail: '20분', icon: '🚶' },
+  { id: 'cooldown', name: '마무리 스트레칭', detail: '5분', icon: '🌿' },
+];
+
+const routineList = document.getElementById('routine-list');
+const progressText = document.getElementById('progress-text');
+const progressPercent = document.getElementById('progress-percent');
+const progressBar = document.getElementById('progress-bar');
+const weekGrid = document.getElementById('week-grid');
+const weekSummary = document.getElementById('week-summary');
+const dateKey = (date = new Date()) => {
+  const offset = date.getTimezoneOffset() * 60000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 10);
+};
+let state = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{"routine":[],"history":{}}');
+if (!Array.isArray(state.routine) || !state.routine.length) state.routine = DEFAULT_ROUTINE;
+if (!state.history) state.history = {};
+
+function save() { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+function todayDone() { return state.history[dateKey()] || []; }
+function isDone(id) { return todayDone().includes(id); }
+function escapeHtml(text) { const element = document.createElement('div'); element.textContent = text; return element.innerHTML; }
+
+function renderRoutine() {
+  const done = todayDone();
+  routineList.innerHTML = state.routine.length ? state.routine.map((item) => {
+    const safeName = escapeHtml(item.name);
+    const safeDetail = escapeHtml(item.detail || '횟수 또는 시간을 입력하세요');
+    return `
+    <li class="routine-item ${done.includes(item.id) ? 'done' : ''}" data-id="${item.id}">
+      <button class="check-btn" type="button" aria-label="${safeName} 완료">${done.includes(item.id) ? '✓' : ''}</button>
+      <span class="exercise-icon">${item.icon || '✨'}</span>
+      <div class="exercise-info"><strong>${safeName}</strong><span>${safeDetail}</span></div>
+      <button class="remove-btn" type="button" aria-label="${safeName} 삭제">×</button>
+    </li>`;
+  }).join('') : '<li class="empty">등록된 운동이 없습니다. 새 루틴을 추가해 보세요.</li>';
+  const total = state.routine.length;
+  const count = done.filter((id) => state.routine.some((item) => item.id === id)).length;
+  const percent = total ? Math.round((count / total) * 100) : 0;
+  progressText.textContent = `${count} / ${total} 완료`;
+  progressPercent.textContent = `${percent}%`;
+  progressBar.style.width = `${percent}%`;
+}
+function weekDates() {
+  const now = new Date(); const day = now.getDay(); const monday = new Date(now);
+  monday.setDate(now.getDate() + (day === 0 ? -6 : 1 - day));
+  return Array.from({ length: 7 }, (_, i) => { const date = new Date(monday); date.setDate(monday.getDate() + i); return date; });
+}
+function getStreak() {
+  let count = 0; const date = new Date();
+  while ((state.history[dateKey(date)] || []).length) { count++; date.setDate(date.getDate() - 1); }
+  return count;
+}
+function renderWeek() {
+  const weekdays = ['월', '화', '수', '목', '금', '토', '일']; let completedDays = 0;
+  weekGrid.innerHTML = weekDates().map((date, index) => {
+    const key = dateKey(date); const completed = (state.history[key] || []).length > 0;
+    if (completed) completedDays++;
+    return `<div class="day ${completed ? 'active' : ''} ${key === dateKey() ? 'today' : ''}"><span>${weekdays[index]}</span><b>${date.getDate()}</b><i>${completed ? '✓' : ''}</i></div>`;
+  }).join('');
+  weekSummary.textContent = `${completedDays}일 운동`;
+  document.getElementById('streak-count').textContent = getStreak();
+}
+function render() { renderRoutine(); renderWeek(); }
+
+routineList.addEventListener('click', (event) => {
+  const item = event.target.closest('.routine-item'); if (!item) return;
+  const id = item.dataset.id;
+  if (event.target.closest('.remove-btn')) {
+    state.routine = state.routine.filter((exercise) => exercise.id !== id);
+    state.history[dateKey()] = todayDone().filter((doneId) => doneId !== id);
+  } else if (event.target.closest('.check-btn')) {
+    state.history[dateKey()] = isDone(id) ? todayDone().filter((doneId) => doneId !== id) : [...todayDone(), id];
+  } else return;
+  save(); render();
+});
+document.getElementById('add-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  const name = document.getElementById('exercise-name'); const detail = document.getElementById('exercise-detail');
+  state.routine.push({ id: `custom-${Date.now()}`, name: name.value.trim(), detail: detail.value.trim(), icon: '✨' });
+  name.value = ''; detail.value = ''; save(); render(); name.focus();
+});
+document.getElementById('reset-btn').addEventListener('click', () => { state.history[dateKey()] = []; save(); render(); });
+document.getElementById('today-label').textContent = new Intl.DateTimeFormat('ko-KR', { month: 'long', day: 'numeric', weekday: 'long' }).format(new Date());
+render();
